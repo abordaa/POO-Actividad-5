@@ -1,0 +1,403 @@
+import html
+import os
+from enum import Enum
+
+import ipywidgets as widgets
+from IPython.display import display
+
+try:
+    from google.colab import output
+    output.enable_custom_widget_manager()
+except ImportError:
+    pass
+
+def barra_titulo(titulo, color="#1a73e8"):
+    return widgets.HTML(
+        f"<div style='background:{color};color:white;padding:6px 12px;"
+        f"font-weight:bold;font-size:14px'>{html.escape(titulo)}</div>"
+    )
+
+
+def marco(*hijos, ancho="640px"):
+    return widgets.VBox(
+        list(hijos),
+        layout=widgets.Layout(
+            border="1px solid #9aa0a6", padding="0 0 10px 0", width=ancho, margin="6px 0"
+        ),
+    )
+
+
+def fila(*hijos):
+    return widgets.HBox(
+        list(hijos), layout=widgets.Layout(padding="3px 12px", align_items="center")
+    )
+
+
+def etiqueta(texto, ancho="150px"):
+    return widgets.Label(texto, layout=widgets.Layout(width=ancho))
+
+class TipoCargo(Enum):
+    DIRECTIVO = "Directivo"
+    ESTRATEGICO = "Estratégico"
+    OPERATIVO = "Operativo"
+
+
+class TipoGenero(Enum):
+    MASCULINO = "Masculino"
+    FEMENINO = "Femenino"
+
+
+class Empleado:
+    def __init__(self, nombre: str, apellidos: str, cargo: TipoCargo, genero: TipoGenero,
+                 salario_dia: float, dias_trabajados: int, otros_ingresos: float,
+                 pagos_salud: float, aporte_pensiones: float):
+        self.__nombre = nombre
+        self.__apellidos = apellidos
+        self.__cargo = cargo
+        self.__genero = genero
+        self.__salario_dia = salario_dia
+        self.__dias_trabajados = dias_trabajados
+        self.__otros_ingresos = otros_ingresos
+        self.__pagos_salud = pagos_salud
+        self.__aporte_pensiones = aporte_pensiones
+
+    def get_nombre(self): return self.__nombre
+    def get_apellidos(self): return self.__apellidos
+    def get_cargo(self): return self.__cargo
+    def get_genero(self): return self.__genero
+    def get_salario_dia(self): return self.__salario_dia
+    def get_dias_trabajados(self): return self.__dias_trabajados
+    def get_otros_ingresos(self): return self.__otros_ingresos
+    def get_pagos_salud(self): return self.__pagos_salud
+    def get_aporte_pensiones(self): return self.__aporte_pensiones
+
+    def calcular_nomina(self) -> float:
+        return (
+            (self.__salario_dia * self.__dias_trabajados)
+            + self.__otros_ingresos
+            - self.__pagos_salud
+            - self.__aporte_pensiones
+        )
+
+
+class ListaEmpleados:
+    def __init__(self):
+        self.lista = []
+        self.total_nomina = 0.0
+
+    def agregar_empleado(self, e: Empleado):
+        self.lista.append(e)
+
+    def calcular_total_nomina(self) -> float:
+        self.total_nomina = sum(e.calcular_nomina() for e in self.lista)
+        return self.total_nomina
+
+    def obtener_matriz(self) -> list:
+        return [[e.get_nombre(), e.get_apellidos(), e.calcular_nomina()] for e in self.lista]
+
+    def convertir_texto(self) -> str:
+        texto = ""
+        for e in self.lista:
+            texto += (
+                f"Nombre = {e.get_nombre()}\n"
+                f"Apellidos = {e.get_apellidos()}\n"
+                f"Cargo = {e.get_cargo().value}\n"
+                f"Género = {e.get_genero().value}\n"
+                f"Salario por día = ${e.get_salario_dia():,.2f}\n"
+                f"Días trabajados = {e.get_dias_trabajados()}\n"
+                f"Otros ingresos = ${e.get_otros_ingresos():,.2f}\n"
+                f"Pagos salud = ${e.get_pagos_salud():,.2f}\n"
+                f"Aportes pensiones = ${e.get_aporte_pensiones():,.2f}\n"
+                f"Sueldo mensual = ${e.calcular_nomina():,.2f}\n"
+                "---------\n"
+            )
+        texto += f"Total nómina = ${self.calcular_total_nomina():,.2f}\n"
+        return texto
+
+class CuadroDialogo:
+    ESTILOS = {
+        "INFORMATION_MESSAGE": ("ℹ️", "#1a73e8"),
+        "WARNING_MESSAGE": ("⚠️", "#e37400"),
+        "ERROR_MESSAGE": ("⛔", "#c5221f"),
+        "QUESTION_MESSAGE": ("❓", "#188038"),
+    }
+
+    def __init__(self, ventana_padre):
+        self.padre = ventana_padre
+
+    def _mostrar(self, titulo, tipo, cuerpo, botones):
+        icono, color = self.ESTILOS[tipo]
+        caja = widgets.VBox(
+            [
+                barra_titulo(titulo, color),
+                widgets.HBox(
+                    [widgets.HTML(f"<span style='font-size:28px'>{icono}</span>"), cuerpo],
+                    layout=widgets.Layout(padding="8px 12px", align_items="center"),
+                ),
+                widgets.HBox(
+                    botones,
+                    layout=widgets.Layout(justify_content="flex-end", padding="0 12px 8px 12px"),
+                ),
+            ],
+            layout=widgets.Layout(border=f"2px solid {color}", width="460px", margin="6px 0 6px 80px"),
+        )
+        self.padre.abrir_dialogo(caja)
+
+    def _cerrar(self):
+        self.padre.cerrar_dialogo()
+
+    def show_message_dialog(self, mensaje, titulo="Mensaje", tipo="INFORMATION_MESSAGE"):
+        ok = widgets.Button(description="Aceptar", button_style="primary")
+        ok.on_click(lambda b: self._cerrar())
+        self._mostrar(
+            titulo,
+            tipo,
+            widgets.HTML(f"<div style='white-space:pre-wrap'>{html.escape(mensaje)}</div>"),
+            [ok],
+        )
+
+    def show_input_dialog(self, mensaje, al_aceptar, valor_inicial="", titulo="Entrada"):
+        campo = widgets.Text(value=valor_inicial, layout=widgets.Layout(width="300px"))
+        ok = widgets.Button(description="Aceptar", button_style="primary")
+        cancelar = widgets.Button(description="Cancelar")
+        ok.on_click(lambda b: (self._cerrar(), al_aceptar(campo.value)))
+        cancelar.on_click(lambda b: self._cerrar())
+        self._mostrar(
+            titulo, "QUESTION_MESSAGE", widgets.VBox([widgets.Label(mensaje), campo]), [ok, cancelar]
+        )
+
+class VentanaAgregarEmpleado:
+    def __init__(self, lista: ListaEmpleados, dialogo: CuadroDialogo):
+        self.lista = lista
+        self.dialogo = dialogo
+        self.inicio()
+
+    def inicio(self):
+        ancho = widgets.Layout(width="230px")
+        self.campo_nombre = widgets.Text(layout=ancho)
+        self.campo_apellidos = widgets.Text(layout=ancho)
+        self.campo_cargo = widgets.Dropdown(options=[c.value for c in TipoCargo], layout=ancho)
+        self.grupo_genero = widgets.RadioButtons(
+            options=[g.value for g in TipoGenero], value="Masculino"
+        )
+        self.campo_salario_dia = widgets.Text(layout=ancho, placeholder="Ej: 50000")
+        self.campo_numero_dias = widgets.BoundedIntText(
+            value=30, min=1, max=31, step=1, layout=widgets.Layout(width="90px")
+        )
+        self.campo_otros_ingresos = widgets.Text(layout=ancho, placeholder="Ej: 100000")
+        self.campo_pagos_salud = widgets.Text(layout=ancho, placeholder="Ej: 60000")
+        self.campo_pensiones = widgets.Text(layout=ancho, placeholder="Ej: 60000")
+
+        self.agregar = widgets.Button(description="Agregar", button_style="primary", icon="plus")
+        self.limpiar = widgets.Button(description="Borrar", icon="eraser")
+        self.agregar.on_click(self.action_performed)
+        self.limpiar.on_click(self.action_performed)
+
+        self.panel = marco(
+            barra_titulo("Agregar empleado", "#5f6368"),
+            fila(etiqueta("Nombre:"), self.campo_nombre),
+            fila(etiqueta("Apellidos:"), self.campo_apellidos),
+            fila(etiqueta("Cargo:"), self.campo_cargo),
+            fila(etiqueta("Género:"), self.grupo_genero),
+            fila(etiqueta("Salario por día:"), self.campo_salario_dia),
+            fila(etiqueta("Días trabajados:"), self.campo_numero_dias),
+            fila(etiqueta("Otros ingresos:"), self.campo_otros_ingresos),
+            fila(etiqueta("Pagos por salud:"), self.campo_pagos_salud),
+            fila(etiqueta("Aportes pensiones:"), self.campo_pensiones),
+            fila(self.agregar, self.limpiar),
+            ancho="460px",
+        )
+
+    def limpiar_campos(self):
+        for campo in (
+            self.campo_nombre, self.campo_apellidos, self.campo_salario_dia,
+            self.campo_otros_ingresos, self.campo_pagos_salud, self.campo_pensiones
+        ):
+            campo.value = ""
+        self.campo_numero_dias.value = 30
+        self.campo_cargo.index = 0
+        self.grupo_genero.value = "Masculino"
+
+    def action_performed(self, boton):
+        if boton is self.agregar:
+            self.anadir_empleado()
+        elif boton is self.limpiar:
+            self.limpiar_campos()
+
+    def anadir_empleado(self):
+        nombre = self.campo_nombre.value.strip()
+        apellidos = self.campo_apellidos.value.strip()
+        if not nombre or not apellidos:
+            self.dialogo.show_message_dialog(
+                "Debe ingresar el nombre y los apellidos.", "Advertencia", "WARNING_MESSAGE"
+            )
+            return
+
+        cargo = next(c for c in TipoCargo if c.value == self.campo_cargo.value)
+        genero = next(g for g in TipoGenero if g.value == self.grupo_genero.value)
+        try:
+            salario = float(self.campo_salario_dia.value)
+            otros = float(self.campo_otros_ingresos.value)
+            salud = float(self.campo_pagos_salud.value)
+            pensiones = float(self.campo_pensiones.value)
+        except ValueError:
+            self.dialogo.show_message_dialog(
+                "Campo nulo o error en formato de número", "Error", "ERROR_MESSAGE"
+            )
+            return
+
+        e = Empleado(
+            nombre, apellidos, cargo, genero, salario,
+            self.campo_numero_dias.value, otros, salud, pensiones
+        )
+        self.lista.agregar_empleado(e)
+        self.dialogo.show_message_dialog(
+            f"El empleado {nombre} {apellidos} ha sido agregado.\n"
+            f"Sueldo mensual: ${e.calcular_nomina():,.2f}",
+            "Mensaje",
+            "INFORMATION_MESSAGE",
+        )
+        self.limpiar_campos()
+
+
+class VentanaNomina:
+    def __init__(self, lista: ListaEmpleados):
+        self.lista = lista
+        self.inicio()
+
+    def inicio(self):
+        datos = self.lista.obtener_matriz()
+        titulos = ["NOMBRE", "APELLIDOS", "SUELDO"]
+        estilo_celda = "border:1px solid #9aa0a6;padding:4px 10px"
+        filas_html = "".join(
+            f"<tr><td style='{estilo_celda}'>{html.escape(n)}</td>"
+            f"<td style='{estilo_celda}'>{html.escape(a)}</td>"
+            f"<td style='{estilo_celda};text-align:right'>{s:,.2f}</td></tr>"
+            for n, a, s in datos
+        ) or (
+            f"<tr><td colspan='3' style='{estilo_celda};color:#888'>"
+            "No hay empleados registrados</td></tr>"
+        )
+        tabla = widgets.HTML(
+            "<table style='border-collapse:collapse;min-width:420px'><tr>"
+            + "".join(f"<th style='{estilo_celda};background:#e8eaed'>{t}</th>" for t in titulos)
+            + "</tr>"
+            + filas_html
+            + "</table>"
+        )
+        total = widgets.HTML(
+            f"<b>Total nómina mensual = $ {self.lista.calcular_total_nomina():,.2f}</b>"
+        )
+        self.panel = marco(
+            barra_titulo("Nómina", "#5f6368"),
+            fila(widgets.Label("Lista de empleados:")),
+            fila(tabla),
+            fila(total),
+            ancho="520px",
+        )
+
+
+class VentanaPrincipal:
+    def __init__(self):
+        self.empleados = ListaEmpleados()
+        self.dialogo = CuadroDialogo(self)
+        self.inicio()
+
+    def inicio(self):
+        self.item_menu1 = widgets.Button(description="Agregar empleado", icon="user-plus")
+        self.item_menu2 = widgets.Button(description="Calcular nómina", icon="table")
+        self.item_menu3 = widgets.Button(description="Guardar archivo", icon="save")
+        self.items = [self.item_menu1, self.item_menu2, self.item_menu3]
+
+        for item in self.items:
+            item.layout = widgets.Layout(width="auto")
+            item.on_click(self.action_performed)
+
+        self.barra_menu = widgets.HBox(
+            [widgets.HTML("<b style='padding:0 8px'>Menú ▸</b>")] + self.items,
+            layout=widgets.Layout(
+                border_bottom="1px solid #ccc", padding="4px 8px", align_items="center"
+            ),
+        )
+        self.area_dialogo = widgets.VBox()
+        self.contenedor = widgets.VBox(layout=widgets.Layout(padding="0 10px"))
+        self.contenedor.children = [
+            widgets.HTML("<p style='color:#5f6368;padding:10px'>Seleccione una opción del menú.</p>")
+        ]
+        self.ventana = marco(
+            barra_titulo("Nómina - Ventana principal"),
+            self.barra_menu,
+            self.area_dialogo,
+            self.contenedor,
+            ancho="680px",
+        )
+
+    def abrir_dialogo(self, caja):
+        self.area_dialogo.children = [caja]
+        for item in self.items:
+            item.disabled = True
+
+    def cerrar_dialogo(self):
+        self.area_dialogo.children = []
+        for item in self.items:
+            item.disabled = False
+
+    def action_performed(self, evento):
+        if evento is self.item_menu1:
+            ventana_agregar = VentanaAgregarEmpleado(self.empleados, self.dialogo)
+            self.contenedor.children = [ventana_agregar.panel]
+        elif evento is self.item_menu2:
+            ventana_nomina = VentanaNomina(self.empleados)
+            self.contenedor.children = [ventana_nomina.panel]
+        elif evento is self.item_menu3:
+            self.dialogo.show_input_dialog(
+                "Carpeta donde se generará el archivo Nómina.txt:",
+                self.guardar_archivo,
+                valor_inicial=os.getcwd(),
+                titulo="Guardar archivo",
+            )
+
+    def guardar_archivo(self, carpeta):
+        carpeta = carpeta.strip() or os.getcwd()
+        if not os.path.isdir(carpeta):
+            self.dialogo.show_message_dialog(
+                f"La carpeta '{carpeta}' no existe.", "Error", "ERROR_MESSAGE"
+            )
+            return
+
+        ruta = os.path.join(carpeta, "Nómina.txt")
+        try:
+            contenido = self.empleados.convertir_texto()
+            with open(ruta, "w", encoding="utf-8") as archivo:
+                archivo.write(contenido)
+        except OSError:
+            self.dialogo.show_message_dialog(
+                "No se pudo crear el archivo.", "Error", "ERROR_MESSAGE"
+            )
+            return
+
+        visor = widgets.Textarea(
+            value=contenido, layout=widgets.Layout(width="600px", height="260px")
+        )
+        self.contenedor.children = [
+            marco(barra_titulo(f"Contenido de {ruta}", "#5f6368"), fila(visor), ancho="640px")
+        ]
+        self.dialogo.show_message_dialog(
+            f"El archivo de la nómina Nómina.txt se ha creado en {carpeta}",
+            "Mensaje",
+            "INFORMATION_MESSAGE",
+        )
+
+    def set_visible(self):
+        display(self.ventana)
+
+
+class Principal:
+    @staticmethod
+    def main():
+        mi_ventana_principal = VentanaPrincipal()
+        mi_ventana_principal.set_visible()
+        return mi_ventana_principal
+
+
+app_84 = Principal.main()
