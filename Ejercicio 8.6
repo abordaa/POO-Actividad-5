@@ -1,0 +1,361 @@
+import html
+from datetime import datetime, date, timedelta
+
+import ipywidgets as widgets
+from IPython.display import display
+
+try: 
+    from google.colab import output
+    output.enable_custom_widget_manager()
+except ImportError:
+    pass
+
+def barra_titulo(titulo, color="#1a73e8"):
+    return widgets.HTML(
+        f"<div style='background:{color};color:white;padding:6px 12px;"
+        f"font-weight:bold;font-size:14px'>{html.escape(titulo)}</div>")
+
+
+def marco(*hijos, ancho="640px"):
+    return widgets.VBox(list(hijos), layout=widgets.Layout(
+        border="1px solid #9aa0a6", padding="0 0 10px 0", width=ancho, margin="6px 0"))
+
+
+def flow(*hijos): 
+    return widgets.HBox(list(hijos), layout=widgets.Layout(padding="4px 12px",
+                                                           align_items="center"))
+
+
+def grid_bag(pares): 
+    hijos = []
+    for izq, der in pares:
+        hijos += [izq, der]
+    return widgets.GridBox(hijos, layout=widgets.Layout(
+        grid_template_columns="200px 260px", grid_gap="6px 8px", padding="6px 12px",
+        align_items="center"))
+
+
+def leer_fecha(texto):
+    """Convierte 'aaaa-mm-dd' en date. Lanza ValueError si el formato es incorrecto."""
+    return datetime.strptime(texto.strip(), "%Y-%m-%d").date()
+
+
+def pesos(valor):
+    return f"${valor:,.0f}".replace(",", ".")
+
+class Huesped:
+    def __init__(self, nombres: str, apellidos: str, documento_identidad: int):
+        self.__nombres = nombres
+        self.__apellidos = apellidos
+        self.__documento_identidad = documento_identidad
+        self.__fecha_ingreso = None
+        self.__fecha_salida = None
+
+    def get_nombres(self): return self.__nombres
+    def get_apellidos(self): return self.__apellidos
+    def get_documento_identidad(self): return self.__documento_identidad
+    def get_fecha_ingreso(self): return self.__fecha_ingreso
+    def get_fecha_salida(self): return self.__fecha_salida
+    def set_fecha_ingreso(self, fecha: date): self.__fecha_ingreso = fecha
+    def set_fecha_salida(self, fecha: date): self.__fecha_salida = fecha
+
+    def obtener_dias_alojamiento(self) -> int:
+        return (self.__fecha_salida - self.__fecha_ingreso).days
+
+
+class Habitacion:
+    def __init__(self, numero_habitacion: int, disponible: bool, precio_dia: float):
+        self.__numero_habitacion = numero_habitacion
+        self.__disponible = disponible
+        self.__precio_dia = precio_dia
+        self.__huesped = None  
+
+    def get_numero_habitacion(self): return self.__numero_habitacion
+    def get_disponible(self): return self.__disponible
+    def get_precio_dia(self): return self.__precio_dia
+    def get_huesped(self): return self.__huesped
+    def set_disponible(self, disponible: bool): self.__disponible = disponible
+    def set_huesped(self, huesped): self.__huesped = huesped
+
+
+class Hotel:
+    """El hotel está compuesto por 10 habitaciones (composición):
+    1 a 5 cuestan $120.000 por día y 6 a 10 cuestan $160.000 por día."""
+
+    def __init__(self):
+        self.lista_habitaciones = [
+            Habitacion(i, True, 120000 if i <= 5 else 160000) for i in range(1, 11)]
+
+    def obtener_habitacion(self, numero: int) -> Habitacion:
+        return self.lista_habitaciones[numero - 1]
+
+    def buscar_fecha_ingreso_habitacion(self, numero: int) -> str:
+        hab = self.obtener_habitacion(numero)
+        if hab.get_huesped() is not None:
+            return hab.get_huesped().get_fecha_ingreso().strftime("%Y/%m/%d")
+        return ""
+
+    def buscar_habitacion_ocupada(self, numero: int) -> bool:
+        return not self.obtener_habitacion(numero).get_disponible()
+
+class VentanaHabitaciones:
+    """Muestra las 10 habitaciones y su estado (GridLayout) y permite elegir una."""
+
+    def __init__(self, hotel: Hotel, principal):
+        self.hotel = hotel
+        self.principal = principal
+        self.inicio()
+
+    def inicio(self):
+        celdas = []
+        for hab in self.hotel.lista_habitaciones:
+            libre = hab.get_disponible()
+            color, fondo = ("#137333", "#e6f4ea") if libre else ("#c5221f", "#fce8e6")
+            celdas.append(widgets.HTML(
+                f"<div style='border:1px solid {color};background:{fondo};padding:6px;"
+                f"text-align:center;width:108px'><b>Habitación {hab.get_numero_habitacion()}"
+                f"</b><br><span style='color:{color}'>"
+                f"{'Disponible' if libre else 'No disponible'}</span><br>"
+                f"<small>{pesos(hab.get_precio_dia())}/día</small></div>"))
+        cuadricula = widgets.GridBox(celdas, layout=widgets.Layout(   
+            grid_template_columns="repeat(5, 120px)", grid_gap="6px", padding="8px 12px"))
+        self.campo_habitacion_seleccionada = widgets.BoundedIntText(
+            value=1, min=1, max=10, step=1, layout=widgets.Layout(width="80px"))
+        self.boton_aceptar = widgets.Button(description="Aceptar", button_style="primary")
+        self.boton_aceptar.on_click(self.action_performed)
+        self.panel = marco(barra_titulo("Habitaciones", "#5f6368"), cuadricula,
+                           flow(widgets.Label("Habitación a reservar:"),
+                                self.campo_habitacion_seleccionada, self.boton_aceptar))
+
+    def action_performed(self, boton):
+        numero = self.campo_habitacion_seleccionada.value
+        if self.hotel.buscar_habitacion_ocupada(numero):
+            self.principal.mensaje("error", f"La habitación {numero} está ocupada. "
+                                            "Seleccione otra habitación.")
+        else:
+            self.principal.mostrar_ventana(VentanaIngreso(self.hotel, numero, self.principal))
+
+
+class VentanaIngreso:
+    """Registra la fecha de ingreso y los datos del huésped (GridBagLayout)."""
+
+    def __init__(self, hotel: Hotel, numero_habitacion_reservada: int, principal):
+        self.hotel = hotel
+        self.numero_habitacion_reservada = numero_habitacion_reservada
+        self.habitacion_reservada = hotel.obtener_habitacion(numero_habitacion_reservada)
+        self.principal = principal
+        self.fecha_inicial = None
+        self.inicio()
+
+    def inicio(self):
+        ancho = widgets.Layout(width="240px")
+        self.campo_fecha_ingreso = widgets.Text(value=date.today().isoformat(), layout=ancho,
+                                                placeholder="aaaa-mm-dd")
+        self.campo_nombre = widgets.Text(layout=ancho)
+        self.campo_apellidos = widgets.Text(layout=ancho)
+        self.campo_documento_identidad = widgets.Text(layout=ancho)
+        self.aceptar = widgets.Button(description="Aceptar", button_style="primary")
+        self.cancelar = widgets.Button(description="Cancelar")
+        self.aceptar.on_click(self.action_performed)
+        self.cancelar.on_click(self.action_performed)
+        self.panel = marco(
+            barra_titulo("Ingreso", "#5f6368"),
+            grid_bag([
+                (widgets.HTML(f"<b>Habitación: {self.numero_habitacion_reservada}</b>"),
+                 widgets.Label(f"Precio por día: "
+                               f"{pesos(self.habitacion_reservada.get_precio_dia())}")),
+                (widgets.Label("Fecha (aaaa-mm-dd):"), self.campo_fecha_ingreso),
+                (widgets.HTML("<b>Huésped</b>"), widgets.Label("")),
+                (widgets.Label("Nombre:"), self.campo_nombre),
+                (widgets.Label("Apellidos:"), self.campo_apellidos),
+                (widgets.Label("Doc. Identidad:"), self.campo_documento_identidad)]),
+            flow(self.aceptar, self.cancelar), ancho="520px")
+
+    def action_performed(self, boton):
+        if boton is self.cancelar:
+            self.principal.mostrar_ventana(VentanaHabitaciones(self.hotel, self.principal))
+            return
+        nombre = self.campo_nombre.value.strip()
+        apellidos = self.campo_apellidos.value.strip()
+        documento = self.campo_documento_identidad.value.strip()
+        if not (self.campo_fecha_ingreso.value.strip() and nombre and apellidos and documento):
+            self.principal.mensaje("error", "Todos los campos son obligatorios.")
+            return
+        try:
+            self.fecha_inicial = leer_fecha(self.campo_fecha_ingreso.value)
+        except ValueError:
+            self.principal.mensaje("error", "La fecha no está en el formato solicitado "
+                                            "(aaaa-mm-dd).")
+            return
+        if not documento.isdigit():
+            self.principal.mensaje("error", "El documento de identidad debe ser numérico.")
+            return
+        huesped = Huesped(nombre, apellidos, int(documento))
+        huesped.set_fecha_ingreso(self.fecha_inicial)
+        self.habitacion_reservada.set_huesped(huesped)
+        self.habitacion_reservada.set_disponible(False)
+        self.principal.mostrar_ventana(VentanaHabitaciones(self.hotel, self.principal))
+        self.principal.mensaje("ok", f"Registro exitoso: {nombre} {apellidos} ocupa la "
+                                     f"habitación {self.numero_habitacion_reservada}.")
+
+
+class VentanaSalida:
+    """Registra la fecha de salida, calcula días y total a pagar y libera la habitación."""
+
+    def __init__(self, hotel: Hotel, numero: int, principal):
+        self.hotel = hotel
+        self.numero_habitacion = numero
+        self.posicion_habitacion = numero - 1
+        self.habitacion_ocupada = hotel.obtener_habitacion(numero)
+        self.principal = principal
+        self.inicio()
+
+    def inicio(self):
+        huesped = self.habitacion_ocupada.get_huesped()
+        sugerida = huesped.get_fecha_ingreso() + timedelta(days=3)
+        self.campo_fecha_salida = widgets.Text(value=sugerida.isoformat(),
+                                               placeholder="aaaa-mm-dd",
+                                               layout=widgets.Layout(width="240px"))
+        self.calcular = widgets.Button(description="Calcular", button_style="info",
+                                       disabled=True)
+        self.registrar_salida = widgets.Button(description="Registrar salida",
+                                               button_style="success", disabled=True)
+        self.cantidad_dias = widgets.HTML("Cantidad de días: ")
+        self.total_pago = widgets.HTML("Total: $")
+        self.estado_fecha = widgets.HTML()
+        self.campo_fecha_salida.observe(self.validar_fecha, names="value")
+        self.calcular.on_click(self.action_performed)
+        self.registrar_salida.on_click(self.action_performed)
+        self.panel = marco(
+            barra_titulo("Salida huéspedes", "#5f6368"),
+            grid_bag([
+                (widgets.HTML(f"<b>Habitación: {self.numero_habitacion}</b>"),
+                 widgets.Label(f"{huesped.get_nombres()} {huesped.get_apellidos()}")),
+                (widgets.Label("Fecha de ingreso:"),
+                 widgets.Label(self.hotel.buscar_fecha_ingreso_habitacion(
+                     self.numero_habitacion))),
+                (widgets.Label("Fecha de salida (aaaa-mm-dd):"), self.campo_fecha_salida),
+                (widgets.Label(""), self.estado_fecha),
+                (self.cantidad_dias, self.total_pago)]),
+            flow(self.calcular, self.registrar_salida), ancho="520px")
+        self.validar_fecha()
+
+    def validar_fecha(self, cambio=None):
+        self.registrar_salida.disabled = True
+        self.cantidad_dias.value = "Cantidad de días: "
+        self.total_pago.value = "Total: $"
+        ingreso = self.habitacion_ocupada.get_huesped().get_fecha_ingreso()
+        try:
+            salida = leer_fecha(self.campo_fecha_salida.value)
+        except ValueError:
+            self.calcular.disabled = True
+            self.estado_fecha.value = "<span style='color:#c5221f'>Formato aaaa-mm-dd</span>"
+            return
+        if salida <= ingreso:
+            self.calcular.disabled = True
+            self.estado_fecha.value = ("<span style='color:#c5221f'>Debe ser mayor a la fecha "
+                                       "de ingreso</span>")
+        else:
+            self.calcular.disabled = False
+            self.estado_fecha.value = "<span style='color:#137333'>Fecha correcta ✔</span>"
+
+    def action_performed(self, boton):
+        huesped = self.habitacion_ocupada.get_huesped()
+        if boton is self.calcular:
+            huesped.set_fecha_salida(leer_fecha(self.campo_fecha_salida.value))
+            dias = huesped.obtener_dias_alojamiento()
+            valor = dias * self.habitacion_ocupada.get_precio_dia()
+            self.cantidad_dias.value = f"<b>Cantidad de días: {dias}</b>"
+            self.total_pago.value = f"<b>Total: {pesos(valor)}</b>"
+            self.registrar_salida.disabled = False
+        elif boton is self.registrar_salida:
+            self.habitacion_ocupada.set_huesped(None)
+            self.habitacion_ocupada.set_disponible(True)
+            self.calcular.disabled = True
+            self.registrar_salida.disabled = True
+            self.principal.mensaje("ok", f"Salida registrada. La habitación "
+                                         f"{self.numero_habitacion} queda disponible.")
+
+
+class VentanaPrincipal:
+    """Ventana principal (BorderLayout): norte = menú, centro = ventanas, sur = mensajes."""
+
+    def __init__(self, hotel: Hotel):
+        self.hotel = hotel
+        self.inicio()
+
+    def inicio(self):
+        self.item_menu1 = widgets.Button(description="Consultar habitaciones", icon="bed",
+                                         layout=widgets.Layout(width="auto"))
+        self.item_menu2 = widgets.Button(description="Salida de huéspedes", icon="sign-out",
+                                         layout=widgets.Layout(width="auto"))
+        self.item_menu1.on_click(self.action_performed)
+        self.item_menu2.on_click(self.action_performed)
+        norte = widgets.HBox([widgets.HTML("<b style='padding:0 8px'>Menú ▸</b>"),
+                              self.item_menu1, self.item_menu2],
+                             layout=widgets.Layout(border_bottom="1px solid #ccc",
+                                                   padding="4px 8px", align_items="center"))
+        self.dialogo = widgets.VBox(layout=widgets.Layout(padding="0 12px"))
+        self.centro = widgets.VBox([widgets.HTML(
+            "<p style='color:#5f6368;padding:10px'>Seleccione una opción del menú.</p>")],
+            layout=widgets.Layout(padding="0 10px"))
+        self.ventana = marco(barra_titulo("Hotel - Ventana principal"), norte, self.dialogo,
+                             self.centro, ancho="700px")
+
+    def mostrar_ventana(self, ventana):
+        self.dialogo.children = []
+        self.centro.children = [ventana.panel]
+
+    def mensaje(self, tipo, texto):
+        """Cuadro de mensaje (JOptionPane.showMessageDialog)."""
+        colores = {"ok": ("#e6f4ea", "#137333", "Mensaje"),
+                   "error": ("#fce8e6", "#c5221f", "Error")}
+        fondo, color, titulo = colores[tipo]
+        cerrar = widgets.Button(description="Aceptar", layout=widgets.Layout(width="90px"))
+        cerrar.on_click(lambda b: setattr(self.dialogo, "children", []))
+        self.dialogo.children = [widgets.HBox(
+            [widgets.HTML(f"<div style='color:{color};padding:4px'><b>{titulo}:</b> "
+                          f"{html.escape(texto)}</div>"), cerrar],
+            layout=widgets.Layout(border=f"2px solid {color}", padding="4px 8px",
+                                  margin="6px 0", justify_content="space-between"))]
+
+    def action_performed(self, boton):
+        if boton is self.item_menu1:
+            self.mostrar_ventana(VentanaHabitaciones(self.hotel, self))
+        elif boton is self.item_menu2:
+            self.pedir_habitacion_salida()
+
+    def pedir_habitacion_salida(self):
+        """Cuadro de entrada (JOptionPane.showInputDialog) para el número de habitación."""
+        campo = widgets.Text(placeholder="1 a 10", layout=widgets.Layout(width="100px"))
+        aceptar = widgets.Button(description="Aceptar", button_style="primary")
+        self.centro.children = [marco(
+            barra_titulo("Salida de huéspedes", "#5f6368"),
+            flow(widgets.Label("Ingrese número de habitación:"), campo, aceptar),
+            ancho="520px")]
+        self.dialogo.children = []
+
+        def al_aceptar(b):
+            texto = campo.value.strip()
+            if not texto.isdigit() or not 1 <= int(texto) <= 10:
+                self.mensaje("error", "Número de habitación incorrecto (debe ser de 1 a 10).")
+            elif not self.hotel.buscar_habitacion_ocupada(int(texto)):
+                self.mensaje("error", f"La habitación {texto} no está ocupada.")
+            else:
+                self.mostrar_ventana(VentanaSalida(self.hotel, int(texto), self))
+        aceptar.on_click(al_aceptar)
+
+    def set_visible(self):
+        display(self.ventana)
+
+
+class Principal:
+    @staticmethod
+    def main():
+        hotel = Hotel()
+        mi_ventana_principal = VentanaPrincipal(hotel)
+        mi_ventana_principal.set_visible()
+        return mi_ventana_principal
+
+
+app_85 = Principal.main()
